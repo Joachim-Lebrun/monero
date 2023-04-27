@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2018, The Monero Project
+// Copyright (c) 2014-2023, The Monero Project
 // 
 // All rights reserved.
 // 
@@ -38,7 +38,10 @@
 #include <vector>
 #include <unordered_map>
 #include <string>
+#include <boost/algorithm/string.hpp>
 #include "misc_log_ex.h"
+#include "fnv1.h"
+#include "common/utf8.h"
 
 /*!
  * \namespace Language
@@ -71,6 +74,25 @@ namespace Language
     return prefix;
   }
 
+  struct WordHash
+  {
+    std::size_t operator()(const epee::wipeable_string &s) const
+    {
+      const epee::wipeable_string sc = tools::utf8canonical(s, [](wint_t c) -> wint_t { return std::towlower(c); });
+      return epee::fnv::FNV1a(sc.data(), sc.size());
+    }
+  };
+
+  struct WordEqual
+  {
+    bool operator()(const epee::wipeable_string &s0, const epee::wipeable_string &s1) const
+    {
+      const epee::wipeable_string s0c = tools::utf8canonical(s0, [](wint_t c) -> wint_t { return std::towlower(c); });
+      const epee::wipeable_string s1c = tools::utf8canonical(s1, [](wint_t c) -> wint_t { return std::towlower(c); });
+      return s0c == s1c;
+    }
+  };
+
   /*!
    * \class Base
    * \brief A base language class which all languages have to inherit from for
@@ -83,9 +105,12 @@ namespace Language
       ALLOW_SHORT_WORDS = 1<<0,
       ALLOW_DUPLICATE_PREFIXES = 1<<1,
     };
-    const std::vector<std::string> word_list; /*!< A pointer to the array of words */
-    std::unordered_map<epee::wipeable_string, uint32_t> word_map; /*!< hash table to find word's index */
-    std::unordered_map<epee::wipeable_string, uint32_t> trimmed_word_map; /*!< hash table to find word's trimmed index */
+    enum {
+      NWORDS = 1626
+    };
+    std::vector<std::string> word_list; /*!< A pointer to the array of words */
+    std::unordered_map<epee::wipeable_string, uint32_t, WordHash, WordEqual> word_map; /*!< hash table to find word's index */
+    std::unordered_map<epee::wipeable_string, uint32_t, WordHash, WordEqual> trimmed_word_map; /*!< hash table to find word's trimmed index */
     std::string language_name; /*!< Name of language */
     std::string english_language_name; /*!< Name of language */
     uint32_t unique_prefix_length; /*!< Number of unique starting characters to trim the wordlist to when matching */
@@ -96,7 +121,7 @@ namespace Language
     {
       int ii;
       std::vector<std::string>::const_iterator it;
-      if (word_list.size () != 1626)
+      if (word_list.size () != NWORDS)
         throw std::runtime_error("Wrong word list length for " + language_name);
       for (it = word_list.begin(), ii = 0; it != word_list.end(); it++, ii++)
       {
@@ -104,7 +129,7 @@ namespace Language
         if ((*it).size() < unique_prefix_length)
         {
           if (flags & ALLOW_SHORT_WORDS)
-            MWARNING(language_name << " word '" << *it << "' is shorter than its prefix length, " << unique_prefix_length);
+            MINFO(language_name << " word '" << *it << "' is shorter than its prefix length, " << unique_prefix_length);
           else
             throw std::runtime_error("Too short word in " + language_name + " word list: " + *it);
         }
@@ -138,6 +163,12 @@ namespace Language
     virtual ~Base()
     {
     }
+    void set_words(const char * const words[])
+    {
+      word_list.resize(NWORDS);
+      for (size_t i = 0; i < NWORDS; ++i)
+        word_list[i] = words[i];
+    }
     /*!
      * \brief Returns a pointer to the word list.
      * \return A pointer to the word list.
@@ -150,7 +181,7 @@ namespace Language
      * \brief Returns a pointer to the word map.
      * \return A pointer to the word map.
      */
-    const std::unordered_map<epee::wipeable_string, uint32_t>& get_word_map() const
+    const std::unordered_map<epee::wipeable_string, uint32_t, WordHash, WordEqual>& get_word_map() const
     {
       return word_map;
     }
@@ -158,7 +189,7 @@ namespace Language
      * \brief Returns a pointer to the trimmed word map.
      * \return A pointer to the trimmed word map.
      */
-    const std::unordered_map<epee::wipeable_string, uint32_t>& get_trimmed_word_map() const
+    const std::unordered_map<epee::wipeable_string, uint32_t, WordHash, WordEqual>& get_trimmed_word_map() const
     {
       return trimmed_word_map;
     }

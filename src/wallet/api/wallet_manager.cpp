@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2018, The Monero Project
+// Copyright (c) 2014-2023, The Monero Project
 //
 // All rights reserved.
 //
@@ -49,6 +49,11 @@ namespace epee {
 
 namespace Monero {
 
+WalletManagerImpl::WalletManagerImpl()
+{
+    tools::set_strict_default_file_permissions(true);
+}
+
 Wallet *WalletManagerImpl::createWallet(const std::string &path, const std::string &password,
                                     const std::string &language, NetworkType nettype, uint64_t kdf_rounds)
 {
@@ -57,9 +62,14 @@ Wallet *WalletManagerImpl::createWallet(const std::string &path, const std::stri
     return wallet;
 }
 
-Wallet *WalletManagerImpl::openWallet(const std::string &path, const std::string &password, NetworkType nettype, uint64_t kdf_rounds)
+Wallet *WalletManagerImpl::openWallet(const std::string &path, const std::string &password, NetworkType nettype, uint64_t kdf_rounds, WalletListener * listener)
 {
     WalletImpl * wallet = new WalletImpl(nettype, kdf_rounds);
+    wallet->setListener(listener);
+    if (listener){
+        listener->onSetWallet(wallet);
+    }
+
     wallet->open(path, password);
     //Refresh addressBook
     wallet->addressBook()->refresh(); 
@@ -88,13 +98,14 @@ Wallet *WalletManagerImpl::recoveryWallet(const std::string &path,
                                                 const std::string &mnemonic,
                                                 NetworkType nettype,
                                                 uint64_t restoreHeight,
-                                                uint64_t kdf_rounds)
+                                                uint64_t kdf_rounds,
+                                                const std::string &seed_offset/* = {}*/)
 {
     WalletImpl * wallet = new WalletImpl(nettype, kdf_rounds);
     if(restoreHeight > 0){
         wallet->setRefreshFromBlockHeight(restoreHeight);
     }
-    wallet->recover(path, password, mnemonic);
+    wallet->recover(path, password, mnemonic, seed_offset);
     return wallet;
 }
 
@@ -122,11 +133,19 @@ Wallet *WalletManagerImpl::createWalletFromDevice(const std::string &path,
                                                   const std::string &deviceName,
                                                   uint64_t restoreHeight,
                                                   const std::string &subaddressLookahead,
-                                                  uint64_t kdf_rounds)
+                                                  uint64_t kdf_rounds,
+                                                  WalletListener * listener)
 {
     WalletImpl * wallet = new WalletImpl(nettype, kdf_rounds);
+    wallet->setListener(listener);
+    if (listener){
+        listener->onSetWallet(wallet);
+    }
+
     if(restoreHeight > 0){
         wallet->setRefreshFromBlockHeight(restoreHeight);
+    } else {
+        wallet->setRefreshFromBlockHeight(wallet->estimateBlockChainHeight());
     }
     auto lookahead = tools::parse_subaddress_lookahead(subaddressLookahead);
     if (lookahead)
@@ -165,6 +184,14 @@ bool WalletManagerImpl::walletExists(const std::string &path)
 bool WalletManagerImpl::verifyWalletPassword(const std::string &keys_file_name, const std::string &password, bool no_spend_key, uint64_t kdf_rounds) const
 {
 	    return tools::wallet2::verify_password(keys_file_name, password, no_spend_key, hw::get_device("default"), kdf_rounds);
+}
+
+bool WalletManagerImpl::queryWalletDevice(Wallet::Device& device_type, const std::string &keys_file_name, const std::string &password, uint64_t kdf_rounds) const
+{
+    hw::device::device_type type;
+    bool r = tools::wallet2::query_device(type, keys_file_name, password, kdf_rounds);
+    device_type = static_cast<Wallet::Device>(type);
+    return r;
 }
 
 std::vector<std::string> WalletManagerImpl::findWallets(const std::string &path)
@@ -206,9 +233,6 @@ std::string WalletManagerImpl::errorString() const
 
 void WalletManagerImpl::setDaemonAddress(const std::string &address)
 {
-    m_daemonAddress = address;
-    if(m_http_client.is_connected())
-        m_http_client.disconnect();
     m_http_client.set_server(address, boost::none);
 }
 
@@ -323,22 +347,30 @@ std::string WalletManagerImpl::resolveOpenAlias(const std::string &address, bool
     return addresses.front();
 }
 
-std::tuple<bool, std::string, std::string, std::string, std::string> WalletManager::checkUpdates(const std::string &software, std::string subdir)
+std::tuple<bool, std::string, std::string, std::string, std::string> WalletManager::checkUpdates(
+    const std::string &software,
+    std::string subdir,
+    const char *buildtag/* = nullptr*/,
+    const char *current_version/* = nullptr*/)
 {
+    if (buildtag == nullptr)
+    {
 #ifdef BUILD_TAG
-    static const char buildtag[] = BOOST_PP_STRINGIZE(BUILD_TAG);
+        static const char buildtag_default[] = BOOST_PP_STRINGIZE(BUILD_TAG);
 #else
-    static const char buildtag[] = "source";
-    // Override the subdir string when built from source
-    subdir = "source";
+        static const char buildtag_default[] = "source";
+        // Override the subdir string when built from source
+        subdir = "source";
 #endif
+        buildtag = buildtag_default;
+    }
 
     std::string version, hash;
     MDEBUG("Checking for a new " << software << " version for " << buildtag);
     if (!tools::check_updates(software, buildtag, version, hash))
       return std::make_tuple(false, "", "", "", "");
 
-    if (tools::vercmp(version.c_str(), MONERO_VERSION) > 0)
+    if (tools::vercmp(version.c_str(), current_version != nullptr ? current_version : MONERO_VERSION) > 0)
     {
       std::string user_url = tools::get_update_url(software, subdir, buildtag, version, true);
       std::string auto_url = tools::get_update_url(software, subdir, buildtag, version, false);
@@ -348,6 +380,10 @@ std::tuple<bool, std::string, std::string, std::string, std::string> WalletManag
     return std::make_tuple(false, "", "", "", "");
 }
 
+bool WalletManagerImpl::setProxy(const std::string &address)
+{
+    return m_http_client.set_proxy(address);
+}
 
 ///////////////////// WalletManagerFactory implementation //////////////////////
 WalletManager *WalletManagerFactory::getWalletManager()
@@ -375,5 +411,3 @@ void WalletManagerFactory::setLogCategories(const std::string &categories)
 
 
 }
-
-namespace Bitmonero = Monero;

@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2018, The Monero Project
+// Copyright (c) 2014-2023, The Monero Project
 // 
 // All rights reserved.
 // 
@@ -33,6 +33,8 @@
 #include <vector>
 
 #include "common/util.h"
+#include "cryptonote_basic/cryptonote_basic.h"
+#include "cryptonote_basic/tx_extra.h"
 #include "cryptonote_core/cryptonote_tx_utils.h"
 
 namespace
@@ -42,7 +44,7 @@ namespace
 
 TEST(parse_tx_extra, handles_empty_extra)
 {
-  std::vector<uint8_t> extra;;
+  std::vector<uint8_t> extra;
   std::vector<cryptonote::tx_extra_field> tx_extra_fields;
   ASSERT_TRUE(cryptonote::parse_tx_extra(extra, tx_extra_fields));
   ASSERT_TRUE(tx_extra_fields.empty());
@@ -202,4 +204,156 @@ TEST(validate_parse_amount_case, validate_parse_amount)
 
   r = cryptonote::parse_amount(res, "1 00.00 00");
   ASSERT_FALSE(r);
+}
+
+TEST(sort_tx_extra, empty)
+{
+  std::vector<uint8_t> extra, sorted;
+  ASSERT_TRUE(cryptonote::sort_tx_extra(extra, sorted));
+  ASSERT_EQ(extra, sorted);
+}
+
+TEST(sort_tx_extra, pubkey)
+{
+  std::vector<uint8_t> sorted;
+  const uint8_t extra_arr[] = {1, 30, 208, 98, 162, 133, 64, 85, 83, 112, 91, 188, 89, 211, 24, 131, 39, 154, 22, 228,
+    80, 63, 198, 141, 173, 111, 244, 183, 4, 149, 186, 140, 230};
+  std::vector<uint8_t> extra(&extra_arr[0], &extra_arr[0] + sizeof(extra_arr));
+  ASSERT_TRUE(cryptonote::sort_tx_extra(extra, sorted));
+  ASSERT_EQ(extra, sorted);
+}
+
+TEST(sort_tx_extra, two_pubkeys)
+{
+  std::vector<uint8_t> sorted;
+  const uint8_t extra_arr[] = {1, 30, 208, 98, 162, 133, 64, 85, 83, 112, 91, 188, 89, 211, 24, 131, 39, 154, 22, 228,
+    80, 63, 198, 141, 173, 111, 244, 183, 4, 149, 186, 140, 230,
+    1, 30, 208, 98, 162, 133, 64, 85, 83, 112, 91, 188, 89, 211, 24, 131, 39, 154, 22, 228,
+    80, 63, 198, 141, 173, 111, 244, 183, 4, 149, 186, 140, 230};
+  std::vector<uint8_t> extra(&extra_arr[0], &extra_arr[0] + sizeof(extra_arr));
+  ASSERT_TRUE(cryptonote::sort_tx_extra(extra, sorted));
+  ASSERT_EQ(extra, sorted);
+}
+
+TEST(sort_tx_extra, keep_order)
+{
+  std::vector<uint8_t> sorted;
+  const uint8_t extra_arr[] = {1, 30, 208, 98, 162, 133, 64, 85, 83, 112, 91, 188, 89, 211, 24, 131, 39, 154, 22, 228,
+    80, 63, 198, 141, 173, 111, 244, 183, 4, 149, 186, 140, 230,
+    2, 9, 1, 0, 0, 0, 0, 0, 0, 0, 0};
+  std::vector<uint8_t> extra(&extra_arr[0], &extra_arr[0] + sizeof(extra_arr));
+  ASSERT_TRUE(cryptonote::sort_tx_extra(extra, sorted));
+  ASSERT_EQ(extra, sorted);
+}
+
+TEST(sort_tx_extra, switch_order)
+{
+  std::vector<uint8_t> sorted;
+  const uint8_t extra_arr[] = {2, 9, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+    1, 30, 208, 98, 162, 133, 64, 85, 83, 112, 91, 188, 89, 211, 24, 131, 39, 154, 22, 228,
+    80, 63, 198, 141, 173, 111, 244, 183, 4, 149, 186, 140, 230};
+  const uint8_t expected_arr[] = {1, 30, 208, 98, 162, 133, 64, 85, 83, 112, 91, 188, 89, 211, 24, 131, 39, 154, 22, 228,
+    80, 63, 198, 141, 173, 111, 244, 183, 4, 149, 186, 140, 230,
+    2, 9, 1, 0, 0, 0, 0, 0, 0, 0, 0};
+  std::vector<uint8_t> extra(&extra_arr[0], &extra_arr[0] + sizeof(extra_arr));
+  ASSERT_TRUE(cryptonote::sort_tx_extra(extra, sorted));
+  std::vector<uint8_t> expected(&expected_arr[0], &expected_arr[0] + sizeof(expected_arr));
+  ASSERT_EQ(expected, sorted);
+}
+
+TEST(sort_tx_extra, invalid)
+{
+  std::vector<uint8_t> sorted;
+  const uint8_t extra_arr[] = {1};
+  std::vector<uint8_t> extra(&extra_arr[0], &extra_arr[0] + sizeof(extra_arr));
+  ASSERT_FALSE(cryptonote::sort_tx_extra(extra, sorted));
+}
+
+TEST(sort_tx_extra, invalid_suffix_strict)
+{
+  std::vector<uint8_t> sorted;
+  const uint8_t extra_arr[] = {2, 9, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1};
+  std::vector<uint8_t> extra(&extra_arr[0], &extra_arr[0] + sizeof(extra_arr));
+  ASSERT_FALSE(cryptonote::sort_tx_extra(extra, sorted));
+}
+
+TEST(sort_tx_extra, invalid_suffix_partial)
+{
+  std::vector<uint8_t> sorted;
+  const uint8_t extra_arr[] = {2, 9, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1};
+  const uint8_t expected_arr[] = {2, 9, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1};
+  std::vector<uint8_t> extra(&extra_arr[0], &extra_arr[0] + sizeof(extra_arr));
+  ASSERT_TRUE(cryptonote::sort_tx_extra(extra, sorted, true));
+  std::vector<uint8_t> expected(&expected_arr[0], &expected_arr[0] + sizeof(expected_arr));
+  ASSERT_EQ(sorted, expected);
+}
+
+TEST(remove_field_from_tx_extra, remove_first)
+{
+  const uint8_t extra_arr[] = {1, 30, 208, 98, 162, 133, 64, 85, 83, 112, 91, 188, 89, 211, 24, 131, 39, 154, 22, 228,
+    80, 63, 198, 141, 173, 111, 244, 183, 4, 149, 186, 140, 230, 2, 1, 42};
+  std::vector<uint8_t> extra(&extra_arr[0], &extra_arr[0] + sizeof(extra_arr));
+
+  std::vector<cryptonote::tx_extra_field> tx_extra_fields;
+  ASSERT_TRUE(cryptonote::parse_tx_extra(extra, tx_extra_fields));
+  ASSERT_EQ(2, tx_extra_fields.size());
+  ASSERT_EQ(typeid(cryptonote::tx_extra_pub_key), tx_extra_fields[0].type());
+  ASSERT_EQ(typeid(cryptonote::tx_extra_nonce), tx_extra_fields[1].type());
+
+  tx_extra_fields.clear();
+  ASSERT_TRUE(cryptonote::remove_field_from_tx_extra(extra, typeid(cryptonote::tx_extra_pub_key)));
+  ASSERT_TRUE(cryptonote::parse_tx_extra(extra, tx_extra_fields));
+  ASSERT_EQ(1, tx_extra_fields.size());
+  ASSERT_EQ(typeid(cryptonote::tx_extra_nonce), tx_extra_fields[0].type());
+}
+
+TEST(remove_field_from_tx_extra, remove_last)
+{
+  const uint8_t extra_arr[] = {1, 30, 208, 98, 162, 133, 64, 85, 83, 112, 91, 188, 89, 211, 24, 131, 39, 154, 22, 228,
+    80, 63, 198, 141, 173, 111, 244, 183, 4, 149, 186, 140, 230, 2, 1, 42};
+  std::vector<uint8_t> extra(&extra_arr[0], &extra_arr[0] + sizeof(extra_arr));
+
+  std::vector<cryptonote::tx_extra_field> tx_extra_fields;
+  ASSERT_TRUE(cryptonote::parse_tx_extra(extra, tx_extra_fields));
+  ASSERT_EQ(2, tx_extra_fields.size());
+  ASSERT_EQ(typeid(cryptonote::tx_extra_pub_key), tx_extra_fields[0].type());
+  ASSERT_EQ(typeid(cryptonote::tx_extra_nonce), tx_extra_fields[1].type());
+
+  tx_extra_fields.clear();
+  ASSERT_TRUE(cryptonote::remove_field_from_tx_extra(extra, typeid(cryptonote::tx_extra_nonce)));
+  ASSERT_TRUE(cryptonote::parse_tx_extra(extra, tx_extra_fields));
+  ASSERT_EQ(1, tx_extra_fields.size());
+  ASSERT_EQ(typeid(cryptonote::tx_extra_pub_key), tx_extra_fields[0].type());
+}
+
+TEST(remove_field_from_tx_extra, remove_middle)
+{
+  const uint8_t extra_arr[] = {1, 30, 208, 98, 162, 133, 64, 85, 83, 112, 91, 188, 89, 211, 24, 131, 39, 154, 22, 228,
+    80, 63, 198, 141, 173, 111, 244, 183, 4, 149, 186, 140, 230, 2, 1, 42, 1, 30, 208, 98, 162, 133, 64, 85, 83, 112,
+    91, 188, 89, 211, 24, 131, 39, 154, 22, 228, 80, 63, 198, 141, 173, 111, 244, 183, 4, 149, 186, 140, 230};
+  std::vector<uint8_t> extra(&extra_arr[0], &extra_arr[0] + sizeof(extra_arr));
+
+  std::vector<cryptonote::tx_extra_field> tx_extra_fields;
+  ASSERT_TRUE(cryptonote::parse_tx_extra(extra, tx_extra_fields));
+  ASSERT_EQ(3, tx_extra_fields.size());
+  ASSERT_EQ(typeid(cryptonote::tx_extra_pub_key), tx_extra_fields[0].type());
+  ASSERT_EQ(typeid(cryptonote::tx_extra_nonce), tx_extra_fields[1].type());
+  ASSERT_EQ(typeid(cryptonote::tx_extra_pub_key), tx_extra_fields[2].type());
+
+  tx_extra_fields.clear();
+  ASSERT_TRUE(cryptonote::remove_field_from_tx_extra(extra, typeid(cryptonote::tx_extra_nonce)));
+  ASSERT_TRUE(cryptonote::parse_tx_extra(extra, tx_extra_fields));
+  ASSERT_EQ(2, tx_extra_fields.size());
+  ASSERT_EQ(typeid(cryptonote::tx_extra_pub_key), tx_extra_fields[0].type());
+  ASSERT_EQ(typeid(cryptonote::tx_extra_pub_key), tx_extra_fields[0].type());
+}
+
+TEST(remove_field_from_tx_extra, invalid_varint)
+{
+  const uint8_t extra_arr[] = {1, 30, 208, 98, 162, 133, 64, 85, 83, 112, 91, 188, 89, 211, 24, 131, 39, 154, 22, 228,
+                               80, 63, 198, 141, 173, 111, 244, 183, 4, 149, 186, 140, 230, 2, 0x80, 0};
+  std::vector<uint8_t> extra(&extra_arr[0], &extra_arr[0] + sizeof(extra_arr));
+
+  ASSERT_FALSE(cryptonote::remove_field_from_tx_extra(extra, typeid(cryptonote::tx_extra_nonce)));
+  ASSERT_EQ(sizeof(extra_arr), extra.size());
 }

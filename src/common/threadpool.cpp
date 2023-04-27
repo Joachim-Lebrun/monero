@@ -1,4 +1,4 @@
-// Copyright (c) 2017-2018, The Monero Project
+// Copyright (c) 2017-2023, The Monero Project
 //
 // All rights reserved.
 //
@@ -28,10 +28,6 @@
 #include "misc_log_ex.h"
 #include "common/threadpool.h"
 
-#include <cassert>
-#include <limits>
-#include <stdexcept>
-
 #include "cryptonote_config.h"
 #include "common/util.h"
 
@@ -41,23 +37,48 @@ static __thread bool is_leaf = false;
 namespace tools
 {
 threadpool::threadpool(unsigned int max_threads) : running(true), active(0) {
-  boost::thread::attributes attrs;
-  attrs.set_stack_size(THREAD_STACK_SIZE);
-  max = max_threads ? max_threads : tools::get_max_concurrency();
-  size_t i = max ? max - 1 : 0;
-  while(i--) {
-    threads.push_back(boost::thread(attrs, boost::bind(&threadpool::run, this, false)));
-  }
+  create(max_threads);
 }
 
 threadpool::~threadpool() {
+  destroy();
+}
+
+void threadpool::destroy() {
+  try
   {
     const boost::unique_lock<boost::mutex> lock(mutex);
     running = false;
     has_work.notify_all();
   }
+  catch (...)
+  {
+    // if the lock throws, we're just do it without a lock and hope,
+    // since the alternative is terminate
+    running = false;
+    has_work.notify_all();
+  }
   for (size_t i = 0; i<threads.size(); i++) {
-    threads[i].join();
+    try { threads[i].join(); }
+    catch (...) { /* ignore */ }
+  }
+  threads.clear();
+}
+
+void threadpool::recycle() {
+  destroy();
+  create(max);
+}
+
+void threadpool::create(unsigned int max_threads) {
+  const boost::unique_lock<boost::mutex> lock(mutex);
+  boost::thread::attributes attrs;
+  attrs.set_stack_size(THREAD_STACK_SIZE);
+  max = max_threads ? max_threads : tools::get_max_concurrency();
+  size_t i = max ? max - 1 : 0;
+  running = true;
+  while(i--) {
+    threads.push_back(boost::thread(attrs, boost::bind(&threadpool::run, this, false)));
   }
 }
 
@@ -90,14 +111,16 @@ unsigned int threadpool::get_max_concurrency() const {
 
 threadpool::waiter::~waiter()
 {
+  try
   {
     boost::unique_lock<boost::mutex> lock(mt);
     if (num)
       MERROR("wait should have been called before waiter dtor - waiting now");
   }
+  catch (...) { /* ignore */ }
   try
   {
-    wait(NULL);
+    wait();
   }
   catch (const std::exception &e)
   {
@@ -105,12 +128,12 @@ threadpool::waiter::~waiter()
   }
 }
 
-void threadpool::waiter::wait(threadpool *tpool) {
-  if (tpool)
-    tpool->run(true);
+bool threadpool::waiter::wait() {
+  pool.run(true);
   boost::unique_lock<boost::mutex> lock(mt);
   while(num)
     cv.wait(lock);
+  return !error();
 }
 
 void threadpool::waiter::inc() {
@@ -138,12 +161,13 @@ void threadpool::run(bool flush) {
     if (!running) break;
 
     active++;
-    e = queue.front();
+    e = std::move(queue.front());
     queue.pop_front();
     lock.unlock();
     ++depth;
     is_leaf = e.leaf;
-    e.f();
+    try { e.f(); }
+    catch (const std::exception &ex) { e.wo->set_error(); try { MERROR("Exception in threadpool job: " << ex.what()); } catch (...) {} }
     --depth;
     is_leaf = false;
 

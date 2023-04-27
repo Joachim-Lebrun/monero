@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2018, The Monero Project
+// Copyright (c) 2014-2023, The Monero Project
 // 
 // All rights reserved.
 // 
@@ -42,6 +42,9 @@
 #include "v2_tests.h"
 #include "rct.h"
 #include "multisig.h"
+#include "bulletproofs.h"
+#include "bulletproof_plus.h"
+#include "rct2.h"
 /************************************************************************/
 /*                                                                      */
 /************************************************************************/

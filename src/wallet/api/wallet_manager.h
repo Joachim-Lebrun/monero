@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2018, The Monero Project
+// Copyright (c) 2014-2023, The Monero Project
 //
 // All rights reserved.
 //
@@ -30,7 +30,7 @@
 
 
 #include "wallet/api/wallet2_api.h"
-#include "net/http_client.h"
+#include "net/http.h"
 #include <string>
 
 namespace Monero {
@@ -40,13 +40,14 @@ class WalletManagerImpl : public WalletManager
 public:
     Wallet * createWallet(const std::string &path, const std::string &password,
                           const std::string &language, NetworkType nettype, uint64_t kdf_rounds = 1) override;
-    Wallet * openWallet(const std::string &path, const std::string &password, NetworkType nettype, uint64_t kdf_rounds = 1) override;
+    Wallet * openWallet(const std::string &path, const std::string &password, NetworkType nettype, uint64_t kdf_rounds = 1, WalletListener * listener = nullptr) override;
     virtual Wallet * recoveryWallet(const std::string &path,
                                        const std::string &password,
                                        const std::string &mnemonic,
                                        NetworkType nettype,
                                        uint64_t restoreHeight,
-                                       uint64_t kdf_rounds = 1) override;
+                                       uint64_t kdf_rounds = 1,
+                                       const std::string &seed_offset = {}) override;
     virtual Wallet * createWalletFromKeys(const std::string &path,
                                              const std::string &password,
                                              const std::string &language,
@@ -72,10 +73,12 @@ public:
                                             const std::string &deviceName,
                                             uint64_t restoreHeight = 0,
                                             const std::string &subaddressLookahead = "",
-                                            uint64_t kdf_rounds = 1) override;
+                                            uint64_t kdf_rounds = 1,
+                                            WalletListener * listener = nullptr) override;
     virtual bool closeWallet(Wallet *wallet, bool store = true) override;
     bool walletExists(const std::string &path) override;
     bool verifyWalletPassword(const std::string &keys_file_name, const std::string &password, bool no_spend_key, uint64_t kdf_rounds = 1) const override;
+    bool queryWalletDevice(Wallet::Device& device_type, const std::string &keys_file_name, const std::string &password, uint64_t kdf_rounds = 1) const override;
     std::vector<std::string> findWallets(const std::string &path) override;
     std::string errorString() const override;
     void setDaemonAddress(const std::string &address) override;
@@ -89,15 +92,13 @@ public:
     bool startMining(const std::string &address, uint32_t threads = 1, bool background_mining = false, bool ignore_battery = true) override;
     bool stopMining() override;
     std::string resolveOpenAlias(const std::string &address, bool &dnssec_valid) const override;
+    bool setProxy(const std::string &address) override;
 
 private:
-    WalletManagerImpl() {}
+    WalletManagerImpl();
     friend struct WalletManagerFactory;
-    std::string m_daemonAddress;
-    epee::net_utils::http::http_simple_client m_http_client;
+    net::http::client m_http_client;
     std::string m_errorString;
 };
 
 } // namespace
-
-namespace Bitmonero = Monero;

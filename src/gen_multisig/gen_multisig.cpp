@@ -1,4 +1,4 @@
-// Copyright (c) 2017-2018, The Monero Project
+// Copyright (c) 2017-2023, The Monero Project
 // 
 // All rights reserved.
 // 
@@ -50,7 +50,6 @@
 using namespace std;
 using namespace epee;
 using namespace cryptonote;
-using boost::lexical_cast;
 namespace po = boost::program_options;
 
 #undef MONERO_DEFAULT_LOG_CATEGORY
@@ -74,8 +73,6 @@ namespace
   const command_line::arg_descriptor<bool, false> arg_testnet = {"testnet", genms::tr("Create testnet multisig wallets"), false};
   const command_line::arg_descriptor<bool, false> arg_stagenet = {"stagenet", genms::tr("Create stagenet multisig wallets"), false};
   const command_line::arg_descriptor<bool, false> arg_create_address_file = {"create-address-file", genms::tr("Create an address file for new wallets"), false};
-
-  const command_line::arg_descriptor< std::vector<std::string> > arg_command = {"command", ""};
 }
 
 static bool generate_multisig(uint32_t threshold, uint32_t total, const std::string &basename, network_type nettype, bool create_address_file)
@@ -86,71 +83,54 @@ static bool generate_multisig(uint32_t threshold, uint32_t total, const std::str
 
   try
   {
+    if (total == 0)
+      throw std::runtime_error("Signer group of size 0 is not allowed.");
+
     // create M wallets first
     std::vector<boost::shared_ptr<tools::wallet2>> wallets(total);
     for (size_t n = 0; n < total; ++n)
     {
       std::string name = basename + "-" + std::to_string(n + 1);
-      wallets[n].reset(new tools::wallet2(nettype));
-      wallets[n]->init(false, "");
+      wallets[n].reset(new tools::wallet2(nettype, 1, false));
+      wallets[n]->init("");
       wallets[n]->generate(name, pwd_container->password(), rct::rct2sk(rct::skGen()), false, false, create_address_file);
     }
 
     // gather the keys
-    std::vector<crypto::secret_key> sk(total);
-    std::vector<crypto::public_key> pk(total);
+    std::vector<std::string> first_round_msgs;
+    first_round_msgs.reserve(total);
     for (size_t n = 0; n < total; ++n)
     {
       wallets[n]->decrypt_keys(pwd_container->password());
-      if (!tools::wallet2::verify_multisig_info(wallets[n]->get_multisig_info(), sk[n], pk[n]))
-      {
-        tools::fail_msg_writer() << tr("Failed to verify multisig info");
-        return false;
-      }
+
+      first_round_msgs.emplace_back(wallets[n]->get_multisig_first_kex_msg());
+
       wallets[n]->encrypt_keys(pwd_container->password());
     }
 
     // make the wallets multisig
-    std::vector<std::string> extra_info(total);
+    std::vector<std::string> kex_msgs_intermediate(total);
     std::stringstream ss;
     for (size_t n = 0; n < total; ++n)
     {
       std::string name = basename + "-" + std::to_string(n + 1);
-      std::vector<crypto::secret_key> skn;
-      std::vector<crypto::public_key> pkn;
-      for (size_t k = 0; k < total; ++k)
-      {
-        if (k != n)
-        {
-          skn.push_back(sk[k]);
-          pkn.push_back(pk[k]);
-        }
-      }
-      extra_info[n] = wallets[n]->make_multisig(pwd_container->password(), skn, pkn, threshold);
+
+      kex_msgs_intermediate[n] = wallets[n]->make_multisig(pwd_container->password(), first_round_msgs, threshold);
+
       ss << "  " << name << std::endl;
     }
 
-    // finalize step if needed
-    if (!extra_info[0].empty())
+    // exchange keys until the wallets are done
+    bool ready{false};
+    wallets[0]->multisig(&ready);
+    while (!ready)
     {
-      std::unordered_set<crypto::public_key> pkeys;
-      std::vector<crypto::public_key> signers(total);
       for (size_t n = 0; n < total; ++n)
       {
-        if (!tools::wallet2::verify_extra_multisig_info(extra_info[n], pkeys, signers[n]))
-        {
-          tools::fail_msg_writer() << genms::tr("Error verifying multisig extra info");
-          return false;
-        }
+          kex_msgs_intermediate[n] = wallets[n]->exchange_multisig_keys(pwd_container->password(), kex_msgs_intermediate);
       }
-      for (size_t n = 0; n < total; ++n)
-      {
-        if (!wallets[n]->finalize_multisig(pwd_container->password(), pkeys, signers))
-        {
-          tools::fail_msg_writer() << genms::tr("Error finalizing multisig");
-          return false;
-        }
-      }
+
+      wallets[0]->multisig(&ready);
     }
 
     std::string address = wallets[0]->get_account().get_public_address_str(wallets[0]->nettype());
@@ -167,6 +147,8 @@ static bool generate_multisig(uint32_t threshold, uint32_t total, const std::str
 
 int main(int argc, char* argv[])
 {
+  TRY_ENTRY();
+
   po::options_description desc_params(wallet_args::tr("Wallet options"));
   command_line::add_arg(desc_params, arg_filename_base);
   command_line::add_arg(desc_params, arg_scheme);
@@ -244,15 +226,10 @@ int main(int argc, char* argv[])
     return 1;
   }
 
-  if (threshold != total-1 && threshold != total)
-  {
-    tools::fail_msg_writer() << genms::tr("Error: unsupported scheme: only N/N and N-1/N are supported");
-    return 1;
-  }
   bool create_address_file = command_line::get_arg(*vm, arg_create_address_file);
   if (!generate_multisig(threshold, total, basename, testnet ? TESTNET : stagenet ? STAGENET : MAINNET, create_address_file))
     return 1;
 
   return 0;
-  //CATCH_ENTRY_L0("main", 1);
+  CATCH_ENTRY_L0("main", 1);
 }

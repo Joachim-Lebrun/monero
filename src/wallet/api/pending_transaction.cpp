@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2018, The Monero Project
+// Copyright (c) 2014-2023, The Monero Project
 //
 // All rights reserved.
 //
@@ -40,6 +40,7 @@
 #include <vector>
 #include <sstream>
 #include <boost/format.hpp>
+#include <boost/filesystem.hpp>
 
 using namespace std;
 
@@ -109,6 +110,23 @@ bool PendingTransactionImpl::commit(const std::string &filename, bool overwrite)
         }
 
         m_wallet.pauseRefresh();
+
+        const bool tx_cold_signed = m_wallet.m_wallet->get_account().get_device().has_tx_cold_sign();
+        if (tx_cold_signed){
+          std::unordered_set<size_t> selected_transfers;
+          for(const tools::wallet2::pending_tx & ptx : m_pending_tx){
+            for(size_t s : ptx.selected_transfers){
+              selected_transfers.insert(s);
+            }
+          }
+
+          m_wallet.m_wallet->cold_tx_aux_import(m_pending_tx, m_tx_device_aux);
+          bool r = m_wallet.m_wallet->import_key_images(m_key_images, 0, selected_transfers);
+          if (!r){
+            throw runtime_error("Cold sign transaction submit failed - key image sync fail");
+          }
+        }
+
         while (!m_pending_tx.empty()) {
             auto & ptx = m_pending_tx.back();
             m_wallet.m_wallet->commit_tx(ptx);
@@ -200,7 +218,11 @@ std::string PendingTransactionImpl::multisigSignData() {
             throw std::runtime_error("wallet is not multisig");
         }
 
-        auto cipher = m_wallet.m_wallet->save_multisig_tx(m_pending_tx);
+        tools::wallet2::multisig_tx_set txSet;
+        txSet.m_ptx = m_pending_tx;
+        txSet.m_signers = m_signers;
+        auto cipher = m_wallet.m_wallet->save_multisig_tx(txSet);
+
         return epee::string_tools::buff_to_hex_nodelimer(cipher);
     } catch (const std::exception& e) {
         m_status = Status_Error;
@@ -242,6 +264,3 @@ std::vector<std::string> PendingTransactionImpl::signersKeys() const {
 }
 
 }
-
-namespace Bitmonero = Monero;
-

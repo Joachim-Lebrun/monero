@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2018, The Monero Project
+// Copyright (c) 2014-2023, The Monero Project
 // 
 // All rights reserved.
 // 
@@ -40,12 +40,10 @@ extern "C"
 }
 #include "cryptonote_basic_impl.h"
 #include "cryptonote_format_utils.h"
+#include "cryptonote_config.h"
 
 #undef MONERO_DEFAULT_LOG_CATEGORY
 #define MONERO_DEFAULT_LOG_CATEGORY "account"
-
-#define KEYS_ENCRYPTION_SALT 'k'
-
 
 using namespace std;
 
@@ -69,7 +67,7 @@ DISABLE_VS_WARNINGS(4244 4345)
     static_assert(sizeof(base_key) == sizeof(crypto::hash), "chacha key and hash should be the same size");
     epee::mlocked<tools::scrubbed_arr<char, sizeof(base_key)+1>> data;
     memcpy(data.data(), &base_key, sizeof(base_key));
-    data[sizeof(base_key)] = KEYS_ENCRYPTION_SALT;
+    data[sizeof(base_key)] = config::HASH_KEY_MEMORY;
     crypto::generate_chacha_key(data.data(), sizeof(data), key, 1);
   }
   //-----------------------------------------------------------------
@@ -136,6 +134,16 @@ DISABLE_VS_WARNINGS(4244 4345)
   void account_base::set_null()
   {
     m_keys = account_keys();
+    m_creation_timestamp = 0;
+  }
+  //-----------------------------------------------------------------
+  void account_base::deinit()
+  {
+    try{
+      m_keys.get_device().disconnect();
+    } catch (const std::exception &e){
+      MERROR("Device disconnect exception: " << e.what());
+    }
   }
   //-----------------------------------------------------------------
   void account_base::forget_spend_key()
@@ -197,15 +205,24 @@ DISABLE_VS_WARNINGS(4244 4345)
   //-----------------------------------------------------------------
   void account_base::create_from_device(const std::string &device_name)
   {
-
     hw::device &hwdev =  hw::get_device(device_name);
-    m_keys.set_device(hwdev);
     hwdev.set_name(device_name);
-    MCDEBUG("ledger", "device type: "<<typeid(hwdev).name());
-    hwdev.init();
-    hwdev.connect();
-    hwdev.get_public_address(m_keys.m_account_address);
-    hwdev.get_secret_keys(m_keys.m_view_secret_key, m_keys.m_spend_secret_key);
+    create_from_device(hwdev);
+  }
+
+  void account_base::create_from_device(hw::device &hwdev)
+  {
+    m_keys.set_device(hwdev);
+    MCDEBUG("device", "device type: "<<typeid(hwdev).name());
+    CHECK_AND_ASSERT_THROW_MES(hwdev.init(), "Device init failed");
+    CHECK_AND_ASSERT_THROW_MES(hwdev.connect(), "Device connect failed");
+    try {
+      CHECK_AND_ASSERT_THROW_MES(hwdev.get_public_address(m_keys.m_account_address), "Cannot get a device address");
+      CHECK_AND_ASSERT_THROW_MES(hwdev.get_secret_keys(m_keys.m_view_secret_key, m_keys.m_spend_secret_key), "Cannot get device secret");
+    } catch (const std::exception &e){
+      hwdev.disconnect();
+      throw;
+    }
     struct tm timestamp = {0};
     timestamp.tm_year = 2014 - 1900;  // year 2014
     timestamp.tm_mon = 4 - 1;  // month april
@@ -234,11 +251,6 @@ DISABLE_VS_WARNINGS(4244 4345)
     m_keys.m_spend_secret_key = spend_secret_key;
     m_keys.m_multisig_keys = multisig_keys;
     return crypto::secret_key_to_public_key(view_secret_key, m_keys.m_account_address.m_view_public_key);
-  }
-  //-----------------------------------------------------------------
-  void account_base::finalize_multisig(const crypto::public_key &spend_public_key)
-  {
-    m_keys.m_account_address.m_spend_public_key = spend_public_key;
   }
   //-----------------------------------------------------------------
   const account_keys& account_base::get_keys() const

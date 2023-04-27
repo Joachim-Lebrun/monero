@@ -1,4 +1,4 @@
-# Copyright (c) 2014-2018, The Monero Project
+# Copyright (c) 2014-2023, The Monero Project
 #
 # All rights reserved.
 #
@@ -27,9 +27,13 @@
 # THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 if(APPLE)
-  find_library(IOKIT_LIBRARY IOKit)
-  mark_as_advanced(IOKIT_LIBRARY)
-  list(APPEND EXTRA_LIBRARIES ${IOKIT_LIBRARY})
+  if(DEPENDS)
+    list(APPEND EXTRA_LIBRARIES "-framework Foundation -framework ApplicationServices -framework AppKit -framework IOKit")
+  else()
+    find_library(IOKIT_LIBRARY IOKit)
+    mark_as_advanced(IOKIT_LIBRARY)
+    list(APPEND EXTRA_LIBRARIES ${IOKIT_LIBRARY})
+  endif()
 endif()
 
 set(checkpoints_sources
@@ -37,8 +41,7 @@ set(checkpoints_sources
 
 set(checkpoints_headers)
 
-set(checkpoints_private_headers
-  checkpoints.h)
+monero_find_all_headers(checkpoints_private_headers "${CMAKE_CURRENT_SOURCE_DIR}")
 
 monero_private_headers(checkpoints
   ${checkpoints_private_headers})

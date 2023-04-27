@@ -1,4 +1,4 @@
-// Copyright (c) 2017-2018, The Monero Project
+// Copyright (c) 2017-2023, The Monero Project
 // 
 // All rights reserved.
 // 
@@ -27,10 +27,13 @@
 // THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <boost/optional/optional.hpp>
+#include <limits>
 #include <string.h>
 #include "memwipe.h"
 #include "misc_log_ex.h"
 #include "wipeable_string.h"
+
+static constexpr const char hex[] = u8"0123456789abcdef";
 
 namespace
 {
@@ -60,13 +63,15 @@ wipeable_string::wipeable_string(wipeable_string &&other)
 wipeable_string::wipeable_string(const std::string &other)
 {
   grow(other.size());
-  memcpy(buffer.data(), other.c_str(), size());
+  if (size() > 0)
+    memcpy(buffer.data(), other.c_str(), size());
 }
 
 wipeable_string::wipeable_string(std::string &&other)
 {
   grow(other.size());
-  memcpy(buffer.data(), other.c_str(), size());
+  if (size() > 0)
+    memcpy(buffer.data(), other.c_str(), size());
   if (!other.empty())
   {
     memwipe(&other[0], other.size()); // we're kinda left with this again aren't we
@@ -77,7 +82,8 @@ wipeable_string::wipeable_string(std::string &&other)
 wipeable_string::wipeable_string(const char *s)
 {
   grow(strlen(s));
-  memcpy(buffer.data(), s, size());
+  if (size() > 0)
+    memcpy(buffer.data(), s, size());
 }
 
 wipeable_string::wipeable_string(const char *s, size_t len)
@@ -110,14 +116,18 @@ void wipeable_string::grow(size_t sz, size_t reserved)
   }
   size_t old_sz = buffer.size();
   std::unique_ptr<char[]> tmp{new char[old_sz]};
-  memcpy(tmp.get(), buffer.data(), old_sz * sizeof(char));
   if (old_sz > 0)
+  {
+    memcpy(tmp.get(), buffer.data(), old_sz * sizeof(char));
     memwipe(buffer.data(), old_sz * sizeof(char));
+  }
   buffer.reserve(reserved);
   buffer.resize(sz);
-  memcpy(buffer.data(), tmp.get(), old_sz * sizeof(char));
   if (old_sz > 0)
+  {
+    memcpy(buffer.data(), tmp.get(), old_sz * sizeof(char));
     memwipe(tmp.get(), old_sz * sizeof(char));
+  }
 }
 
 void wipeable_string::push_back(char c)
@@ -179,13 +189,14 @@ void wipeable_string::split(std::vector<wipeable_string> &fields) const
   while (len--)
   {
     const char c = *ptr++;
-    if (c != ' ')
+    const bool space_prev = space;
+    space = std::isspace(c);
+    if (!space)
     {
-      if (space)
+      if (space_prev)
         fields.push_back({});
       fields.back().push_back(c);
     }
-    space = c == ' ';
   }
 }
 
@@ -197,7 +208,6 @@ boost::optional<epee::wipeable_string> wipeable_string::parse_hexstr() const
   const size_t len = size();
   const char *d = data();
   res->grow(0, len / 2);
-  static constexpr const char hex[] = u8"0123456789abcdef";
   for (size_t i = 0; i < len; i += 2)
   {
     char c = atolower(d[i]);

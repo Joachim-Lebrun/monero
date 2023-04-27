@@ -1,4 +1,5 @@
-// Copyright (c) 2018, The Monero Project
+// Copyright (c) 2018-2023, The Monero Project
+
 // 
 // All rights reserved.
 // 
@@ -32,6 +33,7 @@
 
 #include "misc_log_ex.h"
 #include "wipeable_string.h"
+#include "hex.h"
 
 TEST(wipeable_string, ctor)
 {
@@ -181,24 +183,31 @@ TEST(wipeable_string, split)
   ASSERT_TRUE(check_split(" foo     bar   baz         ", {"foo", "bar", "baz"}));
   ASSERT_TRUE(check_split("  foo     bar   baz", {"foo", "bar", "baz"}));
   ASSERT_TRUE(check_split("foo     bar   baz ", {"foo", "bar", "baz"}));
+  ASSERT_TRUE(check_split("\tfoo\n bar\r\nbaz", {"foo", "bar", "baz"}));
 }
 
 TEST(wipeable_string, parse_hexstr)
 {
   boost::optional<epee::wipeable_string> s;
 
-  ASSERT_EQ(boost::none, epee::wipeable_string("x").parse_hexstr());
-  ASSERT_EQ(boost::none, epee::wipeable_string("x0000000000000000").parse_hexstr());
-  ASSERT_EQ(boost::none, epee::wipeable_string("0000000000000000x").parse_hexstr());
-  ASSERT_EQ(boost::none, epee::wipeable_string("0").parse_hexstr());
-  ASSERT_EQ(boost::none, epee::wipeable_string("000").parse_hexstr());
+  ASSERT_TRUE(boost::none == epee::wipeable_string("x").parse_hexstr());
+  ASSERT_TRUE(boost::none == epee::wipeable_string("x0000000000000000").parse_hexstr());
+  ASSERT_TRUE(boost::none == epee::wipeable_string("0000000000000000x").parse_hexstr());
+  ASSERT_TRUE(boost::none == epee::wipeable_string("0").parse_hexstr());
+  ASSERT_TRUE(boost::none == epee::wipeable_string("000").parse_hexstr());
 
-  ASSERT_TRUE((s = epee::wipeable_string("").parse_hexstr()));
-  ASSERT_EQ(*s, "");
-  ASSERT_TRUE((s = epee::wipeable_string("00").parse_hexstr()));
-  ASSERT_EQ(*s, epee::wipeable_string("", 1));
-  ASSERT_TRUE((s = epee::wipeable_string("41").parse_hexstr()));
-  ASSERT_EQ(*s, epee::wipeable_string("A"));
-  ASSERT_TRUE((s = epee::wipeable_string("414243").parse_hexstr()));
-  ASSERT_EQ(*s, epee::wipeable_string("ABC"));
+  ASSERT_TRUE((s = epee::wipeable_string("").parse_hexstr()) != boost::none);
+  ASSERT_TRUE(*s == "");
+  ASSERT_TRUE((s = epee::wipeable_string("00").parse_hexstr()) != boost::none);
+  ASSERT_TRUE(*s == epee::wipeable_string("", 1));
+  ASSERT_TRUE((s = epee::wipeable_string("41").parse_hexstr()) != boost::none);
+  ASSERT_TRUE(*s == epee::wipeable_string("A"));
+  ASSERT_TRUE((s = epee::wipeable_string("414243").parse_hexstr()) != boost::none);
+  ASSERT_TRUE(*s == epee::wipeable_string("ABC"));
+}
+
+TEST(wipeable_string, to_hex)
+{
+  ASSERT_TRUE(epee::to_hex::wipeable_string(epee::span<const uint8_t>((const uint8_t*)"", 0)) == epee::wipeable_string(""));
+  ASSERT_TRUE(epee::to_hex::wipeable_string(epee::span<const uint8_t>((const uint8_t*)"abc", 3)) == epee::wipeable_string("616263"));
 }

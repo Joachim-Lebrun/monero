@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2018, The Monero Project
+// Copyright (c) 2014-2023, The Monero Project
 // 
 // All rights reserved.
 // 
@@ -42,7 +42,7 @@
 #include "serialization/json_archive.h"
 #include "serialization/debug_archive.h"
 #include "serialization/variant.h"
-#include "serialization/vector.h"
+#include "serialization/containers.h"
 #include "serialization/binary_utils.h"
 #include "wallet/wallet2.h"
 #include "gtest/gtest.h"
@@ -132,11 +132,11 @@ TEST(Serialization, BinaryArchiveInts) {
   ASSERT_EQ(8, oss.str().size());
   ASSERT_EQ(string("\0\0\0\0\xff\0\0\0", 8), oss.str());
 
-  istringstream iss(oss.str());
-  binary_archive<false> iar(iss);
+  const std::string s = oss.str();
+  binary_archive<false> iar{epee::strspan<std::uint8_t>(s)};
   iar.serialize_int(x1);
-  ASSERT_EQ(8, iss.tellg());
-  ASSERT_TRUE(iss.good());
+  ASSERT_EQ(8, iar.getpos());
+  ASSERT_TRUE(iar.good());
 
   ASSERT_EQ(x, x1);
 }
@@ -151,10 +151,10 @@ TEST(Serialization, BinaryArchiveVarInts) {
   ASSERT_EQ(6, oss.str().size());
   ASSERT_EQ(string("\x80\x80\x80\x80\xF0\x1F", 6), oss.str());
 
-  istringstream iss(oss.str());
-  binary_archive<false> iar(iss);
+  const std::string s = oss.str();
+  binary_archive<false> iar{epee::strspan<std::uint8_t>(s)};
   iar.serialize_varint(x1);
-  ASSERT_TRUE(iss.good());
+  ASSERT_TRUE(iar.good());
   ASSERT_EQ(x, x1);
 }
 
@@ -477,7 +477,8 @@ TEST(Serialization, serializes_ringct_types)
   rct::ecdhTuple ecdh0, ecdh1;
   rct::boroSig boro0, boro1;
   rct::mgSig mg0, mg1;
-  rct::rangeSig rg0, rg1;
+  rct::clsag clsag0, clsag1;
+  rct::Bulletproof bp0, bp1;
   rct::rctSig s0, s1;
   cryptonote::transaction tx0, tx1;
 
@@ -550,12 +551,10 @@ TEST(Serialization, serializes_ringct_types)
 
   ecdh0.mask = rct::skGen();
   ecdh0.amount = rct::skGen();
-  ecdh0.senderPk = rct::skGen();
   ASSERT_TRUE(serialization::dump_binary(ecdh0, blob));
   ASSERT_TRUE(serialization::parse_binary(blob, ecdh1));
   ASSERT_TRUE(!memcmp(&ecdh0.mask, &ecdh1.mask, sizeof(ecdh0.mask)));
   ASSERT_TRUE(!memcmp(&ecdh0.amount, &ecdh1.amount, sizeof(ecdh0.amount)));
-  // senderPk is not serialized
 
   for (size_t n = 0; n < 64; ++n)
   {
@@ -568,12 +567,15 @@ TEST(Serialization, serializes_ringct_types)
   ASSERT_TRUE(!memcmp(&boro0, &boro1, sizeof(boro0)));
 
   // create a full rct signature to use its innards
+  vector<uint64_t> inamounts;
   rct::ctkeyV sc, pc;
   rct::ctkey sctmp, pctmp;
-  tie(sctmp, pctmp) = rct::ctskpkGen(6000);
+  inamounts.push_back(6000);
+  tie(sctmp, pctmp) = rct::ctskpkGen(inamounts.back());
   sc.push_back(sctmp);
   pc.push_back(pctmp);
-  tie(sctmp, pctmp) = rct::ctskpkGen(7000);
+  inamounts.push_back(7000);
+  tie(sctmp, pctmp) = rct::ctskpkGen(inamounts.back());
   sc.push_back(sctmp);
   pc.push_back(pctmp);
   vector<uint64_t> amounts;
@@ -590,9 +592,12 @@ TEST(Serialization, serializes_ringct_types)
   amount_keys.push_back(rct::hash_to_scalar(rct::zero()));
   rct::skpkGen(Sk, Pk);
   destinations.push_back(Pk);
-  //compute rct data with mixin 500
-  s0 = rct::genRct(rct::zero(), sc, pc, destinations, amounts, amount_keys, NULL, NULL, 3, hw::get_device("default"));
+  //compute rct data with mixin 3
+  const rct::RCTConfig rct_config{ rct::RangeProofPaddedBulletproof, 2 };
+  s0 = rct::genRctSimple(rct::zero(), sc, pc, destinations, inamounts, amounts, amount_keys, 0, 3, rct_config, hw::get_device("default"));
 
+  ASSERT_FALSE(s0.p.MGs.empty());
+  ASSERT_TRUE(s0.p.CLSAGs.empty());
   mg0 = s0.p.MGs[0];
   ASSERT_TRUE(serialization::dump_binary(mg0, blob));
   ASSERT_TRUE(serialization::parse_binary(blob, mg1));
@@ -606,66 +611,29 @@ TEST(Serialization, serializes_ringct_types)
   // mixRing and II are not serialized, they are meant to be reconstructed
   ASSERT_TRUE(mg1.II.empty());
 
-  rg0 = s0.p.rangeSigs.front();
-  ASSERT_TRUE(serialization::dump_binary(rg0, blob));
-  ASSERT_TRUE(serialization::parse_binary(blob, rg1));
-  ASSERT_TRUE(!memcmp(&rg0, &rg1, sizeof(rg0)));
+  ASSERT_FALSE(s0.p.bulletproofs.empty());
+  bp0 = s0.p.bulletproofs.front();
+  ASSERT_TRUE(serialization::dump_binary(bp0, blob));
+  ASSERT_TRUE(serialization::parse_binary(blob, bp1));
+  bp1.V = bp0.V; // this is not saved, as it is reconstructed from other tx data
+  ASSERT_EQ(bp0, bp1);
 
-#if 0
-  ASSERT_TRUE(serialization::dump_binary(s0, blob));
-  ASSERT_TRUE(serialization::parse_binary(blob, s1));
-  ASSERT_TRUE(s0.type == s1.type);
-  ASSERT_TRUE(s0.p.rangeSigs.size() == s1.p.rangeSigs.size());
-  for (size_t n = 0; n < s0.p.rangeSigs.size(); ++n)
-  {
-    ASSERT_TRUE(!memcmp(&s0.p.rangeSigs[n], &s1.p.rangeSigs[n], sizeof(s0.p.rangeSigs[n])));
-  }
-  ASSERT_TRUE(s0.p.MGs.size() == s1.p.MGs.size());
-  ASSERT_TRUE(s0.p.MGs[0].ss.size() == s1.p.MGs[0].ss.size());
-  for (size_t n = 0; n < s0.p.MGs[0].ss.size(); ++n)
-  {
-    ASSERT_TRUE(s0.p.MGs[0].ss[n] == s1.p.MGs[0].ss[n]);
-  }
-  ASSERT_TRUE(s0.p.MGs[0].cc == s1.p.MGs[0].cc);
-  // mixRing and II are not serialized, they are meant to be reconstructed
-  ASSERT_TRUE(s1.p.MGs[0].II.empty());
+  const rct::RCTConfig rct_config_clsag{ rct::RangeProofPaddedBulletproof, 3 };
+  s0 = rct::genRctSimple(rct::zero(), sc, pc, destinations, inamounts, amounts, amount_keys, 0, 3, rct_config_clsag, hw::get_device("default"));
 
-  // mixRing and II are not serialized, they are meant to be reconstructed
-  ASSERT_TRUE(s1.mixRing.size() == 0);
-
-  ASSERT_TRUE(s0.ecdhInfo.size() == s1.ecdhInfo.size());
-  for (size_t n = 0; n < s0.ecdhInfo.size(); ++n)
+  ASSERT_FALSE(s0.p.CLSAGs.empty());
+  ASSERT_TRUE(s0.p.MGs.empty());
+  clsag0 = s0.p.CLSAGs[0];
+  ASSERT_TRUE(serialization::dump_binary(clsag0, blob));
+  ASSERT_TRUE(serialization::parse_binary(blob, clsag1));
+  ASSERT_TRUE(clsag0.s.size() == clsag1.s.size());
+  for (size_t n = 0; n < clsag0.s.size(); ++n)
   {
-    ASSERT_TRUE(!memcmp(&s0.ecdhInfo[n], &s1.ecdhInfo[n], sizeof(s0.ecdhInfo[n])));
+    ASSERT_TRUE(clsag0.s[n] == clsag1.s[n]);
   }
-  ASSERT_TRUE(s0.outPk.size() == s1.outPk.size());
-  for (size_t n = 0; n < s0.outPk.size(); ++n)
-  {
-    // serialization only does the mask
-    ASSERT_TRUE(!memcmp(&s0.outPk[n].mask, &s1.outPk[n].mask, sizeof(s0.outPk[n].mask)));
-  }
-#endif
-
-  tx0.set_null();
-  tx0.version = 2;
-  cryptonote::txin_to_key txin_to_key1{};
-  txin_to_key1.amount = 100;
-  txin_to_key1.key_offsets.resize(4);
-  cryptonote::txin_to_key txin_to_key2{};
-  txin_to_key2.amount = 200;
-  txin_to_key2.key_offsets.resize(4);
-  tx0.vin.push_back(txin_to_key1);
-  tx0.vin.push_back(txin_to_key2);
-  tx0.vout.push_back(cryptonote::tx_out());
-  tx0.vout.push_back(cryptonote::tx_out());
-  tx0.rct_signatures = s0;
-  ASSERT_EQ(tx0.rct_signatures.p.rangeSigs.size(), 2);
-  ASSERT_TRUE(serialization::dump_binary(tx0, blob));
-  ASSERT_TRUE(serialization::parse_binary(blob, tx1));
-  ASSERT_EQ(tx1.rct_signatures.p.rangeSigs.size(), 2);
-  std::string blob2;
-  ASSERT_TRUE(serialization::dump_binary(tx1, blob2));
-  ASSERT_TRUE(blob == blob2);
+  ASSERT_TRUE(clsag0.c1 == clsag1.c1);
+  // I is not serialized, they are meant to be reconstructed
+  ASSERT_TRUE(clsag0.D == clsag1.D);
 }
 
 TEST(Serialization, portability_wallet)
@@ -787,7 +755,6 @@ TEST(Serialization, portability_wallet)
     auto address_book_row = w.m_address_book.begin();
     ASSERT_TRUE(epee::string_tools::pod_to_hex(address_book_row->m_address.m_spend_public_key) == "9bc53a6ff7b0831c9470f71b6b972dbe5ad1e8606f72682868b1dda64e119fb3");
     ASSERT_TRUE(epee::string_tools::pod_to_hex(address_book_row->m_address.m_view_public_key) == "49fece1ef97dc0c0f7a5e2106e75e96edd910f7e86b56e1e308cd0cf734df191");
-    ASSERT_TRUE(epee::string_tools::pod_to_hex(address_book_row->m_payment_id) == "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef");
     ASSERT_TRUE(address_book_row->m_description == "testnet wallet 9y52S6");
   }
 }
@@ -824,7 +791,7 @@ TEST(Serialization, portability_outputs)
         return {};
     }
     crypto::chacha8(ciphertext.data() + sizeof(iv), ciphertext.size() - prefix_size, key, iv, &plaintext[0]);
-    return std::move(plaintext);
+    return plaintext;
   };
   crypto::secret_key view_secret_key;
   epee::string_tools::hex_to_pod("339673bb1187e2f73ba7841ab6841c5553f96e9f13f8fe6612e69318db4e9d0a", view_secret_key);
@@ -908,6 +875,17 @@ TEST(Serialization, portability_outputs)
   ASSERT_TRUE(td2.m_pk_index == 0);
 }
 
+struct unsigned_tx_set
+{
+  std::vector<tools::wallet2::tx_construction_data> txes;
+  tools::wallet2::transfer_container transfers;
+};
+template <class Archive>
+inline void serialize(Archive &a, unsigned_tx_set &x, const boost::serialization::version_type ver)
+{
+  a & x.txes;
+  a & x.transfers;
+}
 #define UNSIGNED_TX_PREFIX "Monero unsigned tx set\003"
 TEST(Serialization, portability_unsigned_tx)
 {
@@ -918,7 +896,7 @@ TEST(Serialization, portability_unsigned_tx)
   ASSERT_TRUE(r);
   const size_t magiclen = strlen(UNSIGNED_TX_PREFIX);
   ASSERT_FALSE(strncmp(s.c_str(), UNSIGNED_TX_PREFIX, magiclen));
-  tools::wallet2::unsigned_tx_set exported_txs;
+  unsigned_tx_set exported_txs;
   s = s.substr(magiclen);
   r = false;
   try
@@ -1176,4 +1154,27 @@ TEST(Serialization, portability_signed_tx)
   ASSERT_TRUE(epee::string_tools::pod_to_hex(ki0) == "c5680d3735b90871ca5e3d90cd82d6483eed1151b9ab75c2c8c3a7d89e00a5a8");
   ASSERT_TRUE(epee::string_tools::pod_to_hex(ki1) == "d54cbd435a8d636ad9b01b8d4f3eb13bd0cf1ce98eddf53ab1617f9b763e66c0");
   ASSERT_TRUE(epee::string_tools::pod_to_hex(ki2) == "6c3cd6af97c4070a7aef9b1344e7463e29c7cd245076fdb65da447a34da3ca76");
+}
+
+TEST(Serialization, difficulty_type)
+{
+  std::vector<cryptonote::difficulty_type> v_original;
+
+  for(int i = 0; i != 100; i++)
+  {
+    v_original.push_back(cryptonote::difficulty_type("117868131154734361989189100"));
+    if(v_original.size() > 1)
+      v_original.back() *= v_original[v_original.size()-2];
+  }
+
+  std::stringstream ss;
+  boost::archive::portable_binary_oarchive a(ss);
+  a << v_original;
+
+  std::vector<cryptonote::difficulty_type> v_unserialized;
+
+  boost::archive::portable_binary_iarchive a2(ss);
+  a2 >> v_unserialized;
+
+  ASSERT_EQ(v_original, v_unserialized);
 }

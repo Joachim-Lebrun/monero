@@ -28,11 +28,19 @@
 #ifndef _MLOG_H_
 #define _MLOG_H_
 
+#ifdef _WIN32
+#include <windows.h>
+#ifndef ENABLE_VIRTUAL_TERMINAL_PROCESSING
+#define ENABLE_VIRTUAL_TERMINAL_PROCESSING  0x0004
+#endif
+#endif
+
 #include <time.h>
 #include <atomic>
 #include <boost/filesystem.hpp>
 #include <boost/algorithm/string.hpp>
 #include "string_tools.h"
+#include "time_helper.h"
 #include "misc_log_ex.h"
 
 #undef MONERO_DEFAULT_LOG_CATEGORY
@@ -51,12 +59,7 @@ static std::string generate_log_filename(const char *base)
   char tmp[200];
   struct tm tm;
   time_t now = time(NULL);
-  if
-#ifdef WIN32
-  (!gmtime_s(&tm, &now))
-#else
-  (!gmtime_r(&now, &tm))
-#endif
+  if (!epee::misc_utils::get_gmt_time(now, tm))
     snprintf(tmp, sizeof(tmp), "part-%u", ++fallback_counter);
   else
     strftime(tmp, sizeof(tmp), "%Y-%m-%d-%H-%M-%S", &tm);
@@ -97,16 +100,16 @@ static const char *get_default_categories(int level)
   switch (level)
   {
     case 0:
-      categories = "*:WARNING,net:FATAL,net.p2p:FATAL,net.cn:FATAL,global:INFO,verify:FATAL,stacktrace:INFO,logging:INFO,msgwriter:INFO";
+      categories = "*:WARNING,net:FATAL,net.http:FATAL,net.ssl:FATAL,net.p2p:FATAL,net.cn:FATAL,daemon.rpc:FATAL,global:INFO,verify:FATAL,serialization:FATAL,daemon.rpc.payment:ERROR,stacktrace:INFO,logging:INFO,msgwriter:INFO";
       break;
     case 1:
-      categories = "*:INFO,global:INFO,stacktrace:INFO,logging:INFO,msgwriter:INFO";
+      categories = "*:INFO,global:INFO,stacktrace:INFO,logging:INFO,msgwriter:INFO,perf.*:DEBUG";
       break;
     case 2:
       categories = "*:DEBUG";
       break;
     case 3:
-      categories = "*:TRACE";
+      categories = "*:TRACE,*.dump:DEBUG";
       break;
     case 4:
       categories = "*:TRACE";
@@ -116,6 +119,31 @@ static const char *get_default_categories(int level)
   }
   return categories;
 }
+
+#ifdef WIN32
+bool EnableVTMode()
+{
+  // Set output mode to handle virtual terminal sequences
+  HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+  if (hOut == INVALID_HANDLE_VALUE)
+  {
+    return false;
+  }
+
+  DWORD dwMode = 0;
+  if (!GetConsoleMode(hOut, &dwMode))
+  {
+    return false;
+  }
+
+  dwMode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING;
+  if (!SetConsoleMode(hOut, dwMode))
+  {
+    return false;
+  }
+  return true;
+}
+#endif
 
 void mlog_configure(const std::string &filename_base, bool console, const std::size_t max_log_file_size, const std::size_t max_log_files)
 {
@@ -137,7 +165,12 @@ void mlog_configure(const std::string &filename_base, bool console, const std::s
   el::Loggers::addFlag(el::LoggingFlag::StrictLogFileSizeCheck);
   el::Helpers::installPreRollOutCallback([filename_base, max_log_files](const char *name, size_t){
     std::string rname = generate_log_filename(filename_base.c_str());
-    rename(name, rname.c_str());
+    int ret = rename(name, rname.c_str());
+    if (ret < 0)
+    {
+      // can't log a failure, but don't do the file removal below
+      return;
+    }
     if (max_log_files != 0)
     {
       std::vector<boost::filesystem::path> found_files;
@@ -197,6 +230,9 @@ void mlog_configure(const std::string &filename_base, bool console, const std::s
     monero_log = get_default_categories(0);
   }
   mlog_set_log(monero_log);
+#ifdef WIN32
+  EnableVTMode();
+#endif
 }
 
 void mlog_set_categories(const char *categories)
@@ -302,9 +338,19 @@ bool is_stdout_a_tty()
   return is_a_tty.load(std::memory_order_relaxed);
 }
 
+static bool is_nocolor()
+{
+  static const char *no_color_var = getenv("NO_COLOR");
+  static const bool no_color = no_color_var && *no_color_var; // apparently, NO_COLOR=0 means no color too (as per no-color.org)
+  return no_color;
+}
+
 void set_console_color(int color, bool bright)
 {
   if (!is_stdout_a_tty())
+    return;
+
+  if (is_nocolor())
     return;
 
   switch(color)
@@ -425,6 +471,9 @@ void reset_console_color() {
   if (!is_stdout_a_tty())
     return;
 
+  if (is_nocolor())
+    return;
+
 #ifdef WIN32
   HANDLE h_stdout = GetStdHandle(STD_OUTPUT_HANDLE);
   SetConsoleTextAttribute(h_stdout, FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE);
@@ -435,5 +484,55 @@ void reset_console_color() {
 }
 
 }
+
+static bool mlog(el::Level level, const char *category, const char *format, va_list ap) noexcept
+{
+  int size = 0;
+  char *p = NULL;
+  va_list apc;
+  bool ret = true;
+
+  /* Determine required size */
+  va_copy(apc, ap);
+  size = vsnprintf(p, size, format, apc);
+  va_end(apc);
+  if (size < 0)
+    return false;
+
+  size++;             /* For '\0' */
+  p = (char*)malloc(size);
+  if (p == NULL)
+    return false;
+
+  size = vsnprintf(p, size, format, ap);
+  if (size < 0)
+  {
+    free(p);
+    return false;
+  }
+
+  try
+  {
+    MCLOG(level, category, el::Color::Default, p);
+  }
+  catch(...)
+  {
+    ret = false;
+  }
+  free(p);
+
+  return ret;
+}
+
+#define DEFLOG(fun,lev) \
+  bool m##fun(const char *category, const char *fmt, ...) { va_list ap; va_start(ap, fmt); bool ret = mlog(el::Level::lev, category, fmt, ap); va_end(ap); return ret; }
+
+DEFLOG(error, Error)
+DEFLOG(warning, Warning)
+DEFLOG(info, Info)
+DEFLOG(debug, Debug)
+DEFLOG(trace, Trace)
+
+#undef DEFLOG
 
 #endif //_MLOG_H_

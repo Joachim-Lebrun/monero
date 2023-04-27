@@ -1,4 +1,4 @@
-# Copyright (c) 2016-2018, The Monero Project
+# Copyright (c) 2016-2023, The Monero Project
 #
 # All rights reserved.
 #
@@ -30,12 +30,11 @@ set(ringct_basic_sources
   rctOps.cpp
   rctTypes.cpp
   rctCryptoOps.c
-  bulletproofs.cc)
+  multiexp.cc
+  bulletproofs.cc
+  bulletproofs_plus.cc)
 
-set(ringct_basic_private_headers
-  rctOps.h
-  rctTypes.h
-  bulletproofs.h)
+monero_find_all_headers(ringct_basic_private_headers "${CMAKE_CURRENT_SOURCE_DIR}")
 
 monero_private_headers(ringct_basic
   ${crypto_private_headers})

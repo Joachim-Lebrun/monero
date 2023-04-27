@@ -30,215 +30,36 @@
 #include <ctype.h>
 #include <boost/shared_ptr.hpp>
 #include <boost/regex.hpp>
-#include <boost/lexical_cast.hpp>
 #include <boost/optional/optional.hpp>
 #include <boost/utility/string_ref.hpp>
-//#include <mbstring.h>
 #include <algorithm>
 #include <cctype>
 #include <functional>
 
 #include "net_helper.h"
 #include "http_client_base.h"
-
-#ifdef HTTP_ENABLE_GZIP
-#include "gzip_encoding.h"
-#endif 
-
 #include "string_tools.h"
+#include "string_tools_lexical.h"
 #include "reg_exp_definer.h"
+#include "abstract_http_client.h"
 #include "http_base.h" 
 #include "http_auth.h"
-#include "to_nonconst_iterator.h"
 #include "net_parse_helpers.h"
 #include "syncobj.h"
 
-//#include "shlwapi.h"
-
-//#pragma comment(lib, "shlwapi.lib")
-
 #undef MONERO_DEFAULT_LOG_CATEGORY
 #define MONERO_DEFAULT_LOG_CATEGORY "net.http"
-
-extern epee::critical_section gregexp_lock;
-
 
 namespace epee
 {
 namespace net_utils
 {
-
-	/*struct url 
-	{
-	public:
-		void parse(const std::string& url_s)
-		{
-			const string prot_end("://");
-			string::const_iterator prot_i = search(url_s.begin(), url_s.end(),
-				prot_end.begin(), prot_end.end());
-			protocol_.reserve(distance(url_s.begin(), prot_i));
-			transform(url_s.begin(), prot_i,
-				back_inserter(protocol_),
-				ptr_fun<int,int>(tolower)); // protocol is icase
-			if( prot_i == url_s.end() )
-				return;
-			advance(prot_i, prot_end.length());
-			string::const_iterator path_i = find(prot_i, url_s.end(), '/');
-			host_.reserve(distance(prot_i, path_i));
-			transform(prot_i, path_i,
-				back_inserter(host_),
-				ptr_fun<int,int>(tolower)); // host is icase
-			string::const_iterator query_i = find(path_i, url_s.end(), '?');
-			path_.assign(path_i, query_i);
-			if( query_i != url_s.end() )
-				++query_i;
-			query_.assign(query_i, url_s.end());
-		}
-
-		std::string protocol_;
-		std::string host_;
-		std::string path_;
-		std::string query_;
-	};*/
-
-
-
-
 	//---------------------------------------------------------------------------
-	static inline const char* get_hex_vals()
-	{
-		static const char hexVals[16] = {'0','1','2','3','4','5','6','7','8','9','A','B','C','D','E','F'};
-		return hexVals;
-	}
-
-	static inline const char* get_unsave_chars()
-	{
-		//static char unsave_chars[] = "\"<>%\\^[]`+$,@:;/!#?=&";
-		static const char unsave_chars[] = "\"<>%\\^[]`+$,@:;!#&";
-		return unsave_chars;
-	}
-
-	static inline bool is_unsafe(unsigned char compare_char)
-	{
-		if(compare_char <= 32 || compare_char >= 123)
-			return true;
-
-		const char* punsave = get_unsave_chars();
-
-		for(int ichar_pos = 0; 0!=punsave[ichar_pos] ;ichar_pos++)
-			if(compare_char == punsave[ichar_pos])
-				return true;
-
-		return false;
-	}
-	
-	static inline 
-		std::string dec_to_hex(char num, int radix)
-	{
-		int temp=0;
-		std::string csTmp;
-		int num_char;
-
-		num_char = (int) num;
-		if (num_char < 0)
-			num_char = 256 + num_char;
-
-		while (num_char >= radix)
-		{
-			temp = num_char % radix;
-			num_char = (int)floor((float)num_char / (float)radix);
-			csTmp = get_hex_vals()[temp];
-		}
-
-		csTmp += get_hex_vals()[num_char];
-
-		if(csTmp.size() < 2)
-		{
-			csTmp += '0';
-		}
-		
-		std::reverse(csTmp.begin(), csTmp.end());
-		//_mbsrev((unsigned char*)csTmp.data());
-
-		return csTmp;
-	}
-	static inline int get_index(const char *s, char c) { const char *ptr = (const char*)memchr(s, c, 16); return ptr ? ptr-s : -1; }
-	static inline 
-		std::string hex_to_dec_2bytes(const char *s)
-	{
-		const char *hex = get_hex_vals();
-		int i0 = get_index(hex, toupper(s[0]));
-		int i1 = get_index(hex, toupper(s[1]));
-		if (i0 < 0 || i1 < 0)
-			return std::string("%") + std::string(1, s[0]) + std::string(1, s[1]);
-		return std::string(1, i0 * 16 | i1);
-	}
-
-	static inline std::string convert(char val)
-	{
-		std::string csRet;
-		csRet += "%";
-		csRet += dec_to_hex(val, 16);
-		return  csRet;
-	}
-	static inline std::string conver_to_url_format(const std::string& uri)
-	{
-
-		std::string result;
-
-		for(size_t i = 0; i!= uri.size(); i++)
-		{
-			if(is_unsafe(uri[i]))
-				result += convert(uri[i]);
-			else
-				result += uri[i];
-
-		}
-
-		return result;
-	}
-	static inline std::string convert_from_url_format(const std::string& uri)
-	{
-
-		std::string result;
-
-		for(size_t i = 0; i!= uri.size(); i++)
-		{
-			if(uri[i] == '%' && i + 2 < uri.size())
-			{
-				result += hex_to_dec_2bytes(uri.c_str() + i + 1);
-				i += 2;
-			}
-			else
-				result += uri[i];
-
-		}
-
-		return result;
-	}
-
-  static inline std::string convert_to_url_format_force_all(const std::string& uri)
-  {
-
-    std::string result;
-
-    for(size_t i = 0; i!= uri.size(); i++)
-    {
-        result += convert(uri[i]);
-    }
-
-    return result;
-  }
-
-
-
-
-
 	namespace http
 	{
 
 		template<typename net_client_type>
-		class http_simple_client_template: public i_target_handler
+    class http_simple_client_template : public i_target_handler, public abstract_http_client
 		{
 		private:
 			enum reciev_machine_state
@@ -269,17 +90,16 @@ namespace net_utils
 			http_response_info m_response_info;
 			size_t m_len_in_summary;
 			size_t m_len_in_remain;
-			//std::string* m_ptarget_buffer;
 			boost::shared_ptr<i_sub_handler> m_pcontent_encoding_handler;
 			reciev_machine_state m_state;
 			chunked_state m_chunked_state;
 			std::string m_chunked_cache;
+			bool m_auto_connect;
 			critical_section m_lock;
-			bool m_ssl;
 
 		public:
 			explicit http_simple_client_template()
-				: i_target_handler()
+				: i_target_handler(), abstract_http_client()
 				, m_net_client()
 				, m_host_buff()
 				, m_port()
@@ -292,51 +112,56 @@ namespace net_utils
 				, m_state()
 				, m_chunked_state()
 				, m_chunked_cache()
+				, m_auto_connect(true)
 				, m_lock()
-				, m_ssl(false)
 			{}
 
 			const std::string &get_host() const { return m_host_buff; };
 			const std::string &get_port() const { return m_port; };
 
-			bool set_server(const std::string& address, boost::optional<login> user, bool ssl = false)
-			{
-				http::url_content parsed{};
-				const bool r = parse_url(address, parsed);
-				CHECK_AND_ASSERT_MES(r, false, "failed to parse url: " << address);
-				set_server(std::move(parsed.host), std::to_string(parsed.port), std::move(user), ssl);
-				return true;
-			}
+			using abstract_http_client::set_server;
 
-			void set_server(std::string host, std::string port, boost::optional<login> user, bool ssl = false)
+			void set_server(std::string host, std::string port, boost::optional<login> user, ssl_options_t ssl_options = ssl_support_t::e_ssl_support_autodetect) override
 			{
 				CRITICAL_REGION_LOCAL(m_lock);
 				disconnect();
 				m_host_buff = std::move(host);
 				m_port = std::move(port);
-                                m_auth = user ? http_client_auth{std::move(*user)} : http_client_auth{};
-				m_ssl = ssl;
+				m_auth = user ? http_client_auth{std::move(*user)} : http_client_auth{};
+				m_net_client.set_ssl(std::move(ssl_options));
 			}
 
-      bool connect(std::chrono::milliseconds timeout)
+			void set_auto_connect(bool auto_connect) override
+			{
+				m_auto_connect = auto_connect;
+			}
+
+			template<typename F>
+			void set_connector(F connector)
+			{
+				CRITICAL_REGION_LOCAL(m_lock);
+				m_net_client.set_connector(std::move(connector));
+			}
+
+      bool connect(std::chrono::milliseconds timeout) override
       {
         CRITICAL_REGION_LOCAL(m_lock);
-        return m_net_client.connect(m_host_buff, m_port, timeout, m_ssl);
+        return m_net_client.connect(m_host_buff, m_port, timeout);
       }
 			//---------------------------------------------------------------------------
-			bool disconnect()
+			bool disconnect() override
 			{
 				CRITICAL_REGION_LOCAL(m_lock);
 				return m_net_client.disconnect();
 			}
 			//---------------------------------------------------------------------------
-			bool is_connected()
+			bool is_connected(bool *ssl = NULL) override
 			{
 				CRITICAL_REGION_LOCAL(m_lock);
-				return m_net_client.is_connected();
+				return m_net_client.is_connected(ssl);
 			}
 			//---------------------------------------------------------------------------
-			virtual bool handle_target_data(std::string& piece_of_transfer)
+			virtual bool handle_target_data(std::string& piece_of_transfer) override
 			{
 				CRITICAL_REGION_LOCAL(m_lock);
 				m_response_info.m_body += piece_of_transfer;
@@ -349,19 +174,23 @@ namespace net_utils
         return true;
       }
 			//---------------------------------------------------------------------------
-			inline 
-				bool invoke_get(const boost::string_ref uri, std::chrono::milliseconds timeout, const std::string& body = std::string(), const http_response_info** ppresponse_info = NULL, const fields_list& additional_params = fields_list())
+			inline bool invoke_get(const boost::string_ref uri, std::chrono::milliseconds timeout, const std::string& body = std::string(), const http_response_info** ppresponse_info = NULL, const fields_list& additional_params = fields_list()) override
 			{
 					CRITICAL_REGION_LOCAL(m_lock);
 					return invoke(uri, "GET", body, timeout, ppresponse_info, additional_params);
 			}
 
 			//---------------------------------------------------------------------------
-			inline bool invoke(const boost::string_ref uri, const boost::string_ref method, const std::string& body, std::chrono::milliseconds timeout, const http_response_info** ppresponse_info = NULL, const fields_list& additional_params = fields_list())
+			inline bool invoke(const boost::string_ref uri, const boost::string_ref method, const boost::string_ref body, std::chrono::milliseconds timeout, const http_response_info** ppresponse_info = NULL, const fields_list& additional_params = fields_list()) override
 			{
 				CRITICAL_REGION_LOCAL(m_lock);
 				if(!is_connected())
 				{
+					if (!m_auto_connect)
+					{
+						MWARNING("Auto connect attempt to " << m_host_buff << ":" << m_port << " disabled");
+						return false;
+					}
 					MDEBUG("Reconnecting...");
 					if(!connect(timeout))
 					{
@@ -425,18 +254,27 @@ namespace net_utils
 				return false;
 			}
 			//---------------------------------------------------------------------------
-			inline bool invoke_post(const boost::string_ref uri, const std::string& body, std::chrono::milliseconds timeout, const http_response_info** ppresponse_info = NULL, const fields_list& additional_params = fields_list())
-			{
-				CRITICAL_REGION_LOCAL(m_lock);
-				return invoke(uri, "POST", body, timeout, ppresponse_info, additional_params);
-			}
-			//---------------------------------------------------------------------------
 			bool test(const std::string &s, std::chrono::milliseconds timeout) // TEST FUNC ONLY
 			{
 				CRITICAL_REGION_LOCAL(m_lock);
 				m_net_client.set_test_data(s);
 				m_state = reciev_machine_state_header;
 				return handle_reciev(timeout);
+			}
+			//---------------------------------------------------------------------------
+			uint64_t get_bytes_sent() const override
+			{
+				return m_net_client.get_bytes_sent();
+			}
+			//---------------------------------------------------------------------------
+			uint64_t get_bytes_received() const override
+			{
+				return m_net_client.get_bytes_received();
+			}
+			//---------------------------------------------------------------------------
+			void wipe_response()
+			{
+				m_response_info.wipe();
 			}
 			//---------------------------------------------------------------------------
 		private: 
@@ -825,21 +663,21 @@ namespace net_utils
 				const char *ptr = m_header_cache.c_str();
 				CHECK_AND_ASSERT_MES(!memcmp(ptr, "HTTP/", 5), false, "Invalid first response line: " + m_header_cache);
 				ptr += 5;
-				CHECK_AND_ASSERT_MES(isdigit(*ptr), false, "Invalid first response line: " + m_header_cache);
+				CHECK_AND_ASSERT_MES(epee::misc_utils::parse::isdigit(*ptr), false, "Invalid first response line: " + m_header_cache);
 				unsigned long ul;
 				char *end;
 				ul = strtoul(ptr, &end, 10);
 				CHECK_AND_ASSERT_MES(ul <= INT_MAX && *end =='.', false, "Invalid first response line: " + m_header_cache);
 				m_response_info.m_http_ver_hi = ul;
 				ptr = end + 1;
-				CHECK_AND_ASSERT_MES(isdigit(*ptr), false, "Invalid first response line: " + m_header_cache + ", ptr: " << ptr);
+				CHECK_AND_ASSERT_MES(epee::misc_utils::parse::isdigit(*ptr), false, "Invalid first response line: " + m_header_cache + ", ptr: " << ptr);
 				ul = strtoul(ptr, &end, 10);
 				CHECK_AND_ASSERT_MES(ul <= INT_MAX && isblank(*end), false, "Invalid first response line: " + m_header_cache + ", ptr: " << ptr);
 				m_response_info.m_http_ver_lo = ul;
 				ptr = end + 1;
 				while (isblank(*ptr))
 					++ptr;
-				CHECK_AND_ASSERT_MES(isdigit(*ptr), false, "Invalid first response line: " + m_header_cache);
+				CHECK_AND_ASSERT_MES(epee::misc_utils::parse::isdigit(*ptr), false, "Invalid first response line: " + m_header_cache);
 				ul = strtoul(ptr, &end, 10);
 				CHECK_AND_ASSERT_MES(ul >= 100 && ul <= 999 && isspace(*end), false, "Invalid first response line: " + m_header_cache);
 				m_response_info.m_response_code = ul;
@@ -862,13 +700,9 @@ namespace net_utils
 				boost::smatch result;						//   12      3
 				if(boost::regex_search( m_response_info.m_header_info.m_content_encoding, result, rexp_match_gzip, boost::match_default) && result[0].matched)
 				{
-#ifdef HTTP_ENABLE_GZIP
-					m_pcontent_encoding_handler.reset(new content_encoding_gzip(this, result[3].matched));
-#else
           m_pcontent_encoding_handler.reset(new do_nothing_sub_handler(this));
-          LOG_ERROR("GZIP encoding not supported in this build, please add zlib to your project and define HTTP_ENABLE_GZIP");
+          LOG_ERROR("GZIP encoding not supported");
           return false;
-#endif
 				}
 				else 
 				{

@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2018, The Monero Project
+// Copyright (c) 2014-2023, The Monero Project
 // 
 // All rights reserved.
 // 
@@ -54,9 +54,6 @@ bool test_transaction_generation_and_ring_signature()
   account_base miner_acc6;
   miner_acc6.generate();
 
-  std::string add_str = miner_acc3.get_public_address_str(MAINNET);
-
-
   account_base rv_acc;
   rv_acc.generate();
   account_base rv_acc2;
@@ -75,14 +72,11 @@ bool test_transaction_generation_and_ring_signature()
   construct_miner_tx(0, 0, 0, 0, 0, miner_acc6.get_keys().m_account_address, tx_mine_6);
 
   //fill inputs entry
-  typedef tx_source_entry::output_entry tx_output_entry;
   std::vector<tx_source_entry> sources;
   sources.resize(sources.size()+1);
   tx_source_entry& src = sources.back();
   src.amount = 70368744177663;
   {
-    tx_output_entry oe;
-
     src.push_output(0, boost::get<txout_to_key>(tx_mine_1.vout[0].target).key, src.amount);
 
     src.push_output(1, boost::get<txout_to_key>(tx_mine_2.vout[0].target).key, src.amount);

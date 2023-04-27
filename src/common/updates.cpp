@@ -1,4 +1,4 @@
-// Copyright (c) 2017-2018, The Monero Project
+// Copyright (c) 2017-2023, The Monero Project
 // 
 // All rights reserved.
 // 
@@ -48,7 +48,10 @@ namespace tools
     static const std::vector<std::string> dns_urls = {
         "updates.moneropulse.org",
         "updates.moneropulse.net",
-        "updates.moneropulse.co",
+        "updates.moneropulse.fr",
+        "updates.moneropulse.de",
+        "updates.moneropulse.no",
+        "updates.moneropulse.ch",
         "updates.moneropulse.se"
     };
 
@@ -101,7 +104,9 @@ namespace tools
   {
     const char *base = user ? "https://downloads.getmonero.org/" : "https://updates.getmonero.org/";
 #ifdef _WIN32
-    static const char *extension = strncmp(buildtag.c_str(), "install-", 8) ? ".zip" : ".exe";
+    static const char *extension = strncmp(buildtag.c_str(), "source", 6) ? (strncmp(buildtag.c_str(), "install-", 8) ? ".zip" : ".exe") : ".tar.bz2";
+#elif defined(__APPLE__)
+    static const char *extension = strncmp(software.c_str(), "monero-gui", 10) ? ".tar.bz2" : ".dmg";
 #else
     static const char extension[] = ".tar.bz2";
 #endif

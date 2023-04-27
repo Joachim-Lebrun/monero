@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2018, The Monero Project
+// Copyright (c) 2014-2023, The Monero Project
 //
 // All rights reserved.
 //
@@ -60,5 +60,3 @@ void onStartup()
 
 
 } // namespace
-
-namespace Bitmonero = Monero;

@@ -1,4 +1,4 @@
-# Copyright (c) 2014-2018, The Monero Project
+# Copyright (c) 2014-2023, The Monero Project
 #
 # All rights reserved.
 #
@@ -31,8 +31,7 @@ set(simplewallet_sources
 
 set(simplewallet_headers)
 
-set(simplewallet_private_headers
-  simplewallet.h)
+monero_find_all_headers(simplewallet_private_headers "${CMAKE_CURRENT_SOURCE_DIR}")
 
 monero_private_headers(simplewallet
   ${simplewallet_private_headers})
@@ -49,10 +48,12 @@ target_link_libraries(simplewallet
     common
     mnemonics
     ${EPEE_READLINE}
+    qrcodegen
     version
     ${Boost_CHRONO_LIBRARY}
     ${Boost_PROGRAM_OPTIONS_LIBRARY}
     ${Boost_FILESYSTEM_LIBRARY}
+    ${Boost_LOCALE_LIBRARY}
     ${ICU_LIBRARIES}
     ${Boost_THREAD_LIBRARY}
     ${CMAKE_THREAD_LIBS_INIT}

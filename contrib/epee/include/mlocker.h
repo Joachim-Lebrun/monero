@@ -1,4 +1,5 @@
-// Copyright (c) 2018, The Monero Project
+// Copyright (c) 2018-2023, The Monero Project
+
 // 
 // All rights reserved.
 // 
@@ -73,7 +74,7 @@ namespace epee
     mlocked(const T &&t): T(t) { mlocker::lock(this, sizeof(T)); }
     mlocked(const mlocked<T> &&mt): T(mt) { mlocker::lock(this, sizeof(T)); }
     mlocked<T> &operator=(const mlocked<T> &mt) { T::operator=(mt); return *this; }
-    ~mlocked() { mlocker::unlock(this, sizeof(T)); }
+    ~mlocked() { try { mlocker::unlock(this, sizeof(T)); } catch (...) { /* do not propagate */ } }
   };
 
   template<typename T>

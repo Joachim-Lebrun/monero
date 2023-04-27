@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2018, The Monero Project
+// Copyright (c) 2014-2023, The Monero Project
 // 
 // All rights reserved.
 // 
@@ -70,8 +70,9 @@ namespace {
     }
     else
     {
-      return std::string{p_error_text};
+      std::string ret{p_error_text};
       LocalFree(p_error_text);
+      return ret;
     }
   }
 
@@ -195,7 +196,7 @@ bool install_service(
       , 0
       //, GENERIC_EXECUTE | GENERIC_READ
       , SERVICE_WIN32_OWN_PROCESS
-      , SERVICE_DEMAND_START
+      , SERVICE_AUTO_START
       , SERVICE_ERROR_NORMAL
       , full_command.c_str()
       , nullptr

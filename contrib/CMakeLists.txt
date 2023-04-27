@@ -1,4 +1,4 @@
-# Copyright (c) 2014-2018, The Monero Project
+# Copyright (c) 2014-2023, The Monero Project
 # 
 # All rights reserved.
 # 
@@ -26,10 +26,6 @@
 # STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
 # THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-# warnings are cleared only for GCC on Linux
-if (NOT (MINGW OR APPLE OR FREEBSD OR OPENBSD OR DRAGONFLY))
-  add_compile_options("${WARNINGS_AS_ERRORS_FLAG}") # applies only to targets that follow
-endif()
-
+monero_enable_coverage()
 add_subdirectory(epee)
 
